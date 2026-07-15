@@ -1,0 +1,6 @@
+pandas
+openpyxl
+streamlit
+gspread
+gspread-dataframe
+google-auth-oauthlib
