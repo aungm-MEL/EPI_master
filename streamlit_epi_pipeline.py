@@ -18,14 +18,41 @@ class StepResult:
     stderr: str
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-EPI_THEMATIC = PROJECT_ROOT / "EPI_thematic_sheet"
-SCRIPT_CREATE_OVERALL = EPI_THEMATIC / "create_epi_overall.py"
-SCRIPT_CREATE_MASTER = EPI_THEMATIC / "EPI_master" / "create_epi_master_sheet.py"
-OUTPUT_OVERALL = EPI_THEMATIC / "EPI_overall.xlsx"
-OUTPUT_MASTER = EPI_THEMATIC / "EPI_master" / "SE_EPI_master.xlsx"
-GOOGLE_CREDENTIALS = EPI_THEMATIC / ".secrets" / "credentials.json"
-GOOGLE_AUTHORIZED = EPI_THEMATIC / ".secrets" / "authorized_user.json"
+def first_existing(*paths: Path) -> Path:
+    for path in paths:
+        if path.exists():
+            return path
+    return paths[0]
+
+
+BASE_DIR = Path(__file__).resolve().parent
+LEGACY_EPI_THEMATIC = BASE_DIR.parent / "EPI_thematic_sheet"
+
+PROJECT_ROOT = first_existing(BASE_DIR, LEGACY_EPI_THEMATIC)
+SCRIPT_CREATE_OVERALL = first_existing(
+    BASE_DIR / "create_epi_overall.py",
+    LEGACY_EPI_THEMATIC / "create_epi_overall.py",
+)
+SCRIPT_CREATE_MASTER = first_existing(
+    BASE_DIR / "create_epi_master_sheet.py",
+    LEGACY_EPI_THEMATIC / "EPI_master" / "create_epi_master_sheet.py",
+)
+OUTPUT_OVERALL = first_existing(
+    BASE_DIR / "EPI_overall.xlsx",
+    LEGACY_EPI_THEMATIC / "EPI_overall.xlsx",
+)
+OUTPUT_MASTER = first_existing(
+    BASE_DIR / "SE_EPI_master.xlsx",
+    LEGACY_EPI_THEMATIC / "EPI_master" / "SE_EPI_master.xlsx",
+)
+GOOGLE_CREDENTIALS = first_existing(
+    BASE_DIR / ".secrets" / "credentials.json",
+    LEGACY_EPI_THEMATIC / ".secrets" / "credentials.json",
+)
+GOOGLE_AUTHORIZED = first_existing(
+    BASE_DIR / ".secrets" / "authorized_user.json",
+    LEGACY_EPI_THEMATIC / ".secrets" / "authorized_user.json",
+)
 
 
 def run_step(name: str, command: List[str]) -> StepResult:
