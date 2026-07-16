@@ -4,6 +4,7 @@ import argparse
 import importlib
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence, Tuple
+from urllib.parse import urlparse
 
 import pandas as pd
 
@@ -225,7 +226,23 @@ def build_td_alod(td_alod: pd.DataFrame) -> pd.DataFrame:
     return apply_dynamic_period_from_year(out)
 
 
-def try_sync_google_sheets(sheet_name: str, tables: Dict[str, pd.DataFrame], secrets_dir: Path) -> None:
+def extract_spreadsheet_id(sheet_url: str) -> str | None:
+    parsed = urlparse(sheet_url)
+    parts = [part for part in parsed.path.split("/") if part]
+    if "d" not in parts:
+        return None
+    idx = parts.index("d")
+    if idx + 1 >= len(parts):
+        return None
+    return parts[idx + 1]
+
+
+def try_sync_google_sheets(
+    sheet_name: str,
+    tables: Dict[str, pd.DataFrame],
+    secrets_dir: Path,
+    sheet_url: str | None = None,
+) -> None:
     try:
         gspread = importlib.import_module("gspread")
         set_with_dataframe = importlib.import_module(
@@ -261,10 +278,18 @@ def try_sync_google_sheets(sheet_name: str, tables: Dict[str, pd.DataFrame], sec
         authorized_user_filename=str(authorized_user_filename),
     )
 
-    try:
-        spreadsheet = gc.open(sheet_name)
-    except gspread.SpreadsheetNotFound:
-        spreadsheet = gc.create(sheet_name)
+    spreadsheet = None
+    if sheet_url:
+        spreadsheet_id = extract_spreadsheet_id(sheet_url)
+        if spreadsheet_id:
+            spreadsheet = gc.open_by_key(spreadsheet_id)
+        else:
+            spreadsheet = gc.open_by_url(sheet_url)
+    else:
+        try:
+            spreadsheet = gc.open(sheet_name)
+        except gspread.SpreadsheetNotFound:
+            spreadsheet = gc.create(sheet_name)
 
     for ws_name, table in tables.items():
         try:
@@ -322,6 +347,12 @@ def main() -> None:
         help="Google Sheet name for --sync-google.",
     )
     parser.add_argument(
+        "--sheet-url",
+        type=str,
+        default="",
+        help="Google Sheet URL for --sync-google. If provided, this is used instead of --sheet-name.",
+    )
+    parser.add_argument(
         "--secrets-dir",
         type=Path,
         default=epi_thematic_dir / ".secrets",
@@ -361,7 +392,12 @@ def main() -> None:
         print(f"- {name}: {len(table):,} rows x {len(table.columns)} cols")
 
     if args.sync_google:
-        try_sync_google_sheets(args.sheet_name, tables, args.secrets_dir.resolve())
+        try_sync_google_sheets(
+            args.sheet_name,
+            tables,
+            args.secrets_dir.resolve(),
+            sheet_url=args.sheet_url.strip() or None,
+        )
 
 
 if __name__ == "__main__":
