@@ -27,17 +27,41 @@ class CommandResult:
 
 def resolve_paths() -> Dict[str, Path]:
     app_file = Path(__file__).resolve()
-    project_root = app_file.parents[2]
-    thematic_dir = project_root / "EPI_thematic_sheet"
+
+    candidate_roots: List[Path] = []
+    for root in [Path.cwd(), app_file.parent, *app_file.parents]:
+        if root not in candidate_roots:
+            candidate_roots.append(root)
+
+    for root in candidate_roots:
+        candidate_thematics = [root / "EPI_thematic_sheet", root]
+        for thematic_dir in candidate_thematics:
+            script_overall = thematic_dir / "create_epi_overall.py"
+            script_master = thematic_dir / "EPI_master" / "create_epi_master_sheet.py"
+            if script_overall.exists() and script_master.exists():
+                return {
+                    "project_root": root,
+                    "thematic_dir": thematic_dir,
+                    "script_overall": script_overall,
+                    "script_master": script_master,
+                    "output_overall": thematic_dir / "EPI_overall.xlsx",
+                    "output_master": thematic_dir / "EPI_master" / "SE_EPI_master.xlsx",
+                    "credentials": thematic_dir / ".secrets" / "credentials.json",
+                    "authorized": thematic_dir / ".secrets" / "authorized_user.json",
+                }
+
+    # Fallback for unexpected layouts; validation will report exact missing files.
+    fallback_root = app_file.parents[2] if len(app_file.parents) > 2 else app_file.parent
+    fallback_thematic = fallback_root / "EPI_thematic_sheet"
     return {
-        "project_root": project_root,
-        "thematic_dir": thematic_dir,
-        "script_overall": thematic_dir / "create_epi_overall.py",
-        "script_master": thematic_dir / "EPI_master" / "create_epi_master_sheet.py",
-        "output_overall": thematic_dir / "EPI_overall.xlsx",
-        "output_master": thematic_dir / "EPI_master" / "SE_EPI_master.xlsx",
-        "credentials": thematic_dir / ".secrets" / "credentials.json",
-        "authorized": thematic_dir / ".secrets" / "authorized_user.json",
+        "project_root": fallback_root,
+        "thematic_dir": fallback_thematic,
+        "script_overall": fallback_thematic / "create_epi_overall.py",
+        "script_master": fallback_thematic / "EPI_master" / "create_epi_master_sheet.py",
+        "output_overall": fallback_thematic / "EPI_overall.xlsx",
+        "output_master": fallback_thematic / "EPI_master" / "SE_EPI_master.xlsx",
+        "credentials": fallback_thematic / ".secrets" / "credentials.json",
+        "authorized": fallback_thematic / ".secrets" / "authorized_user.json",
     }
 
 
@@ -183,6 +207,7 @@ def main() -> None:
 
         st.markdown("### Location")
         st.write(str(PATHS["project_root"]))
+        st.write(str(PATHS["thematic_dir"]))
 
     issues = validate_prerequisites(sync_google=sync_google)
     if issues:
