@@ -5,238 +5,246 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, List
 
 import streamlit as st
 
 
 @dataclass
-class StepResult:
-    name: str
+class CommandResult:
+    step: str
     command: List[str]
-    returncode: int
+    return_code: int
     stdout: str
     stderr: str
+    started_at: datetime
+    ended_at: datetime
+
+    @property
+    def duration_seconds(self) -> float:
+        return (self.ended_at - self.started_at).total_seconds()
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-EPI_THEMATIC = PROJECT_ROOT / "EPI_thematic_sheet"
-SCRIPT_CREATE_OVERALL = EPI_THEMATIC / "create_epi_overall.py"
-SCRIPT_CREATE_MASTER = EPI_THEMATIC / "EPI_master" / "create_epi_master_sheet.py"
+def resolve_paths() -> Dict[str, Path]:
+    app_file = Path(__file__).resolve()
+    project_root = app_file.parents[2]
+    thematic_dir = project_root / "EPI_thematic_sheet"
+    return {
+        "project_root": project_root,
+        "thematic_dir": thematic_dir,
+        "script_overall": thematic_dir / "create_epi_overall.py",
+        "script_master": thematic_dir / "EPI_master" / "create_epi_master_sheet.py",
+        "output_overall": thematic_dir / "EPI_overall.xlsx",
+        "output_master": thematic_dir / "EPI_master" / "SE_EPI_master.xlsx",
+        "credentials": thematic_dir / ".secrets" / "credentials.json",
+        "authorized": thematic_dir / ".secrets" / "authorized_user.json",
+    }
 
-INPUT_KDHW = PROJECT_ROOT / "KDHW" / "quarterly compile.update.xlsx"
-INPUT_KNA = PROJECT_ROOT / "KNA" / "KNA_EPI_long.xlsx"
-INPUT_CHDN = PROJECT_ROOT / "CHDN EPI" / "data" / "CHDN dataset_long.xlsx"
 
-OUTPUT_OVERALL = EPI_THEMATIC / "EPI_overall.xlsx"
-OUTPUT_MASTER = EPI_THEMATIC / "EPI_master" / "SE_EPI_master.xlsx"
-
-GOOGLE_SECRETS_DIR = EPI_THEMATIC / ".secrets"
-GOOGLE_CREDENTIALS = GOOGLE_SECRETS_DIR / "credentials.json"
-GOOGLE_AUTHORIZED = GOOGLE_SECRETS_DIR / "authorized_user.json"
+PATHS = resolve_paths()
 
 
-def run_step(name: str, command: List[str]) -> StepResult:
+def ensure_state() -> None:
+    if "history" not in st.session_state:
+        st.session_state.history = []
+
+
+def run_command(step: str, command: List[str], cwd: Path) -> CommandResult:
+    started = datetime.now()
     proc = subprocess.run(
         command,
-        cwd=PROJECT_ROOT,
+        cwd=cwd,
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
         shell=False,
     )
-    return StepResult(
-        name=name,
+    ended = datetime.now()
+    result = CommandResult(
+        step=step,
         command=command,
-        returncode=proc.returncode,
-        stdout=proc.stdout or "",
-        stderr=proc.stderr or "",
+        return_code=proc.returncode,
+        stdout=(proc.stdout or "").strip(),
+        stderr=(proc.stderr or "").strip(),
+        started_at=started,
+        ended_at=ended,
     )
+    st.session_state.history.append(result)
+    return result
 
 
-def save_uploaded_file(uploaded_file, target_path: Path) -> None:
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    target_path.write_bytes(uploaded_file.getbuffer())
-
-
-def format_mtime(path: Path) -> str:
+def file_stamp(path: Path) -> str:
     if not path.exists():
         return "Not found"
-    ts = datetime.fromtimestamp(path.stat().st_mtime)
-    return ts.strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def status_row(label: str, path: Path) -> None:
-    exists = path.exists()
-    if exists:
-        st.success(f"{label}: Found")
+def validate_prerequisites(sync_google: bool) -> List[str]:
+    issues: List[str] = []
+    if not PATHS["script_overall"].exists():
+        issues.append(f"Missing script: {PATHS['script_overall']}")
+    if not PATHS["script_master"].exists():
+        issues.append(f"Missing script: {PATHS['script_master']}")
+    if sync_google and not PATHS["credentials"].exists():
+        issues.append(f"Missing credentials.json: {PATHS['credentials']}")
+    return issues
+
+
+def build_master_command(sync_google: bool, sheet_name: str) -> List[str]:
+    cmd = [sys.executable, str(PATHS["script_master"]), "--sheet-name", sheet_name]
+    if not sync_google:
+        cmd.append("--no-sync-google")
+    return cmd
+
+
+def show_result(result: CommandResult) -> None:
+    header = f"{result.step} ({result.duration_seconds:.1f}s)"
+    if result.return_code == 0:
+        st.success(f"{header} succeeded")
     else:
-        st.warning(f"{label}: Missing")
-    st.caption(str(path))
-    st.caption(f"Last modified: {format_mtime(path)}")
+        st.error(f"{header} failed with exit code {result.return_code}")
+
+    with st.expander(f"Logs: {result.step}", expanded=result.return_code != 0):
+        st.code(" ".join(result.command), language="bash")
+        st.text_area(
+            label=f"STDOUT - {result.step}",
+            value=result.stdout or "(no stdout)",
+            height=180,
+            disabled=True,
+        )
+        st.text_area(
+            label=f"STDERR - {result.step}",
+            value=result.stderr or "(no stderr)",
+            height=180,
+            disabled=True,
+        )
+        if "drive.googleapis.com" in result.stderr.lower() or "api has not been used" in result.stderr.lower():
+            st.warning(
+                "Google Drive API appears disabled for the OAuth project. "
+                "Enable Drive API in Google Cloud Console, wait a few minutes, and rerun."
+            )
 
 
-def render_step_result(result: StepResult) -> None:
-    if result.returncode == 0:
-        st.success(f"{result.name} completed")
-    else:
-        st.error(f"{result.name} failed (exit code: {result.returncode})")
+def show_outputs() -> None:
+    st.subheader("Outputs")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write(f"EPI_overall.xlsx updated: {file_stamp(PATHS['output_overall'])}")
+        if PATHS["output_overall"].exists():
+            with PATHS["output_overall"].open("rb") as handle:
+                st.download_button(
+                    "Download EPI_overall.xlsx",
+                    data=handle.read(),
+                    file_name=PATHS["output_overall"].name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+    with col2:
+        st.write(f"SE_EPI_master.xlsx updated: {file_stamp(PATHS['output_master'])}")
+        if PATHS["output_master"].exists():
+            with PATHS["output_master"].open("rb") as handle:
+                st.download_button(
+                    "Download SE_EPI_master.xlsx",
+                    data=handle.read(),
+                    file_name=PATHS["output_master"].name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
 
-    with st.expander(f"{result.name} logs", expanded=result.returncode != 0):
-        st.text("COMMAND:\n" + " ".join(result.command))
-        st.text("STDOUT:\n" + (result.stdout.strip() or "(no stdout)"))
-        st.text("STDERR:\n" + (result.stderr.strip() or "(no stderr)"))
 
+def show_history() -> None:
+    st.subheader("Run History")
+    if not st.session_state.history:
+        st.info("No runs in this session yet.")
+        return
 
-def precheck(sync_google: bool) -> Tuple[bool, List[str]]:
-    ok = True
-    messages: List[str] = []
-
-    if not SCRIPT_CREATE_OVERALL.exists():
-        ok = False
-        messages.append(f"Missing script: {SCRIPT_CREATE_OVERALL}")
-
-    if not SCRIPT_CREATE_MASTER.exists():
-        ok = False
-        messages.append(f"Missing script: {SCRIPT_CREATE_MASTER}")
-
-    for label, path in [
-        ("KDHW input", INPUT_KDHW),
-        ("KNA input", INPUT_KNA),
-        ("CHDN input", INPUT_CHDN),
-    ]:
-        if not path.exists():
-            ok = False
-            messages.append(f"Missing {label}: {path}")
-
-    if sync_google and not GOOGLE_CREDENTIALS.exists():
-        ok = False
-        messages.append(f"Missing Google credentials: {GOOGLE_CREDENTIALS}")
-
-    return ok, messages
+    for item in reversed(st.session_state.history[-12:]):
+        icon = "OK" if item.return_code == 0 else "FAIL"
+        st.write(
+            f"{icon} | {item.started_at.strftime('%H:%M:%S')} | {item.step} | "
+            f"exit {item.return_code} | {item.duration_seconds:.1f}s"
+        )
 
 
 def main() -> None:
-    st.set_page_config(page_title="EPI Overall -> SE_EPI_master", layout="wide")
-    st.title("EPI Overall -> SE_EPI_master Pipeline (New App)")
-    st.caption("This app does not modify your existing create_epi_overall.py or create_epi_master_sheet.py scripts.")
+    st.set_page_config(page_title="EPI Pipeline Control Center", layout="wide")
+    ensure_state()
 
-    st.subheader("1) Upload Source Files (Optional)")
-    st.write("Upload only when you need to replace current source files.")
+    st.title("EPI Pipeline Control Center")
+    st.caption("Fresh workflow: configure once in sidebar, run exactly the step you need.")
 
-    col_up_1, col_up_2 = st.columns(2)
-    with col_up_1:
-        up_kdhw = st.file_uploader("KDHW file", type=["xlsx"], key="kdhw")
-        if up_kdhw and st.button("Save KDHW file"):
-            save_uploaded_file(up_kdhw, INPUT_KDHW)
-            st.success(f"Saved: {INPUT_KDHW}")
+    with st.sidebar:
+        st.header("Run Settings")
+        sync_google = st.toggle("Enable Google Sheet sync", value=True)
+        sheet_name = st.text_input("Google Sheet name", value="SE_EPI_master").strip() or "SE_EPI_master"
 
-        up_kna = st.file_uploader("KNA file", type=["xlsx"], key="kna")
-        if up_kna and st.button("Save KNA file"):
-            save_uploaded_file(up_kna, INPUT_KNA)
-            st.success(f"Saved: {INPUT_KNA}")
+        st.markdown("### Secrets Status")
+        st.write(f"credentials.json: {'found' if PATHS['credentials'].exists() else 'missing'}")
+        st.write(f"authorized_user.json: {'found' if PATHS['authorized'].exists() else 'missing'}")
 
-    with col_up_2:
-        up_chdn = st.file_uploader("CHDN file", type=["xlsx"], key="chdn")
-        if up_chdn and st.button("Save CHDN file"):
-            save_uploaded_file(up_chdn, INPUT_CHDN)
-            st.success(f"Saved: {INPUT_CHDN}")
+        st.markdown("### Location")
+        st.write(str(PATHS["project_root"]))
 
-        up_creds = st.file_uploader("Google credentials.json (optional)", type=["json"], key="creds")
-        if up_creds and st.button("Save Google credentials"):
-            save_uploaded_file(up_creds, GOOGLE_CREDENTIALS)
-            st.success(f"Saved: {GOOGLE_CREDENTIALS}")
+    issues = validate_prerequisites(sync_google=sync_google)
+    if issues:
+        st.error("Prerequisite check failed")
+        for issue in issues:
+            st.write(f"- {issue}")
+        st.stop()
 
-    st.divider()
-    st.subheader("2) Current File Status")
-    s1, s2 = st.columns(2)
-    with s1:
-        status_row("create_epi_overall.py", SCRIPT_CREATE_OVERALL)
-        status_row("KDHW input", INPUT_KDHW)
-        status_row("KNA input", INPUT_KNA)
-        status_row("CHDN input", INPUT_CHDN)
+    st.subheader("Actions")
+    a, b, c = st.columns(3)
+    run_full = a.button("Run Full Pipeline", use_container_width=True, type="primary")
+    run_overall = b.button("Run Step 1 Only", use_container_width=True)
+    run_master = c.button("Run Step 2 Only", use_container_width=True)
 
-    with s2:
-        status_row("create_epi_master_sheet.py", SCRIPT_CREATE_MASTER)
-        status_row("EPI_overall.xlsx", OUTPUT_OVERALL)
-        status_row("SE_EPI_master.xlsx", OUTPUT_MASTER)
-        status_row("Google credentials.json", GOOGLE_CREDENTIALS)
+    if run_full:
+        progress = st.progress(0, text="Starting full pipeline")
 
-    st.divider()
-    st.subheader("3) Run Pipeline")
-
-    sync_google = st.checkbox("Update Google Sheet (SE_EPI_master)", value=True)
-    sheet_name = st.text_input("Google Sheet Name", value="SE_EPI_master")
-
-    if GOOGLE_AUTHORIZED.exists():
-        st.info("authorized_user.json found. Existing Google login token is available.")
-    else:
-        st.info("authorized_user.json not found. First Google sync may ask you to login.")
-
-    if st.button("Run: create_epi_overall -> create_epi_master_sheet", type="primary"):
-        ok, messages = precheck(sync_google=sync_google)
-        if not ok:
-            st.error("Precheck failed. Fix the following first:")
-            for msg in messages:
-                st.write(f"- {msg}")
-            st.stop()
-
-        progress = st.progress(0, text="Starting pipeline...")
-
-        progress.progress(30, text="Step 1: create_epi_overall.py")
-        step1 = run_step(
+        progress.progress(30, text="Running Step 1")
+        step1 = run_command(
             "Step 1 - create_epi_overall",
-            [sys.executable, str(SCRIPT_CREATE_OVERALL)],
+            [sys.executable, str(PATHS["script_overall"])],
+            cwd=PATHS["project_root"],
         )
-        render_step_result(step1)
-        if step1.returncode != 0:
+        show_result(step1)
+        if step1.return_code != 0:
             progress.empty()
             st.stop()
 
-        progress.progress(75, text="Step 2: create_epi_master_sheet.py")
-        cmd2 = [
-            sys.executable,
-            str(SCRIPT_CREATE_MASTER),
-            "--input",
-            str(OUTPUT_OVERALL),
-            "--sheet-name",
-            sheet_name,
-        ]
-        if not sync_google:
-            cmd2.append("--no-sync-google")
-
-        step2 = run_step("Step 2 - create_epi_master_sheet", cmd2)
-        render_step_result(step2)
-        if step2.returncode != 0:
+        progress.progress(75, text="Running Step 2")
+        step2 = run_command(
+            "Step 2 - create_epi_master_sheet",
+            build_master_command(sync_google=sync_google, sheet_name=sheet_name),
+            cwd=PATHS["project_root"],
+        )
+        show_result(step2)
+        if step2.return_code != 0:
             progress.empty()
             st.stop()
 
-        progress.progress(100, text="Done")
-        st.success("Pipeline completed successfully.")
-        st.write(f"Updated file: {OUTPUT_OVERALL}")
-        st.write(f"Updated file: {OUTPUT_MASTER}")
+        progress.progress(100, text="Completed")
+        st.success("Pipeline finished successfully.")
+
+    if run_overall:
+        result = run_command(
+            "Step 1 - create_epi_overall",
+            [sys.executable, str(PATHS["script_overall"])],
+            cwd=PATHS["project_root"],
+        )
+        show_result(result)
+
+    if run_master:
+        result = run_command(
+            "Step 2 - create_epi_master_sheet",
+            build_master_command(sync_google=sync_google, sheet_name=sheet_name),
+            cwd=PATHS["project_root"],
+        )
+        show_result(result)
 
     st.divider()
-    st.subheader("4) Quick Downloads")
-    d1, d2 = st.columns(2)
-    with d1:
-        if OUTPUT_OVERALL.exists():
-            st.download_button(
-                "Download EPI_overall.xlsx",
-                data=OUTPUT_OVERALL.read_bytes(),
-                file_name=OUTPUT_OVERALL.name,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-
-    with d2:
-        if OUTPUT_MASTER.exists():
-            st.download_button(
-                "Download SE_EPI_master.xlsx",
-                data=OUTPUT_MASTER.read_bytes(),
-                file_name=OUTPUT_MASTER.name,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
+    show_outputs()
+    st.divider()
+    show_history()
 
 
 if __name__ == "__main__":
