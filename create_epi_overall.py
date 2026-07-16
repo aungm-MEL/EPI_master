@@ -8,12 +8,43 @@ from typing import Iterable
 import pandas as pd
 
 BASE_DIR = Path(__file__).resolve().parent
-ROOT_DIR = BASE_DIR.parent
-OUTPUT_FILE = BASE_DIR / "EPI_overall.xlsx"
 
-KDHW_FILE = ROOT_DIR / "KDHW" / "quarterly compile.update.xlsx"
-KNA_FILE = ROOT_DIR / "KNA" / "KNA_EPI_long.xlsx"
-CHDN_FILE = ROOT_DIR / "CHDN EPI" / "data" / "CHDN dataset_long.xlsx"
+
+def resolve_data_paths() -> dict[str, Path]:
+    candidate_roots: list[Path] = []
+    for root in [Path.cwd(), BASE_DIR, BASE_DIR.parent, *BASE_DIR.parents]:
+        if root not in candidate_roots:
+            candidate_roots.append(root)
+
+    relative_paths = {
+        "kdhw": Path("KDHW") / "quarterly compile.update.xlsx",
+        "kna": Path("KNA") / "KNA_EPI_long.xlsx",
+        "chdn": Path("CHDN EPI") / "data" / "CHDN dataset_long.xlsx",
+    }
+
+    for root in candidate_roots:
+        kdhw = root / relative_paths["kdhw"]
+        kna = root / relative_paths["kna"]
+        chdn = root / relative_paths["chdn"]
+        if kdhw.exists() and kna.exists() and chdn.exists():
+            output_base = BASE_DIR if (BASE_DIR / "EPI_master").exists() else root
+            return {
+                "root": root,
+                "output": output_base / "EPI_overall.xlsx",
+                "kdhw": kdhw,
+                "kna": kna,
+                "chdn": chdn,
+            }
+
+    # Fallback to the most likely project root so error messages are informative.
+    fallback_root = BASE_DIR.parent if (BASE_DIR / "EPI_master").exists() else BASE_DIR
+    return {
+        "root": fallback_root,
+        "output": (BASE_DIR if (BASE_DIR / "EPI_master").exists() else fallback_root) / "EPI_overall.xlsx",
+        "kdhw": fallback_root / relative_paths["kdhw"],
+        "kna": fallback_root / relative_paths["kna"],
+        "chdn": fallback_root / relative_paths["chdn"],
+    }
 
 
 VTHC_COLUMNS = [
@@ -253,69 +284,82 @@ def concat_frames(frames: list[pd.DataFrame], columns: Iterable[str]) -> pd.Data
 
 
 def main() -> None:
-    if not KDHW_FILE.exists():
-        raise FileNotFoundError(f"Missing source workbook: {KDHW_FILE}")
-    if not KNA_FILE.exists():
-        raise FileNotFoundError(f"Missing source workbook: {KNA_FILE}")
-    if not CHDN_FILE.exists():
-        raise FileNotFoundError(f"Missing source workbook: {CHDN_FILE}")
+    paths = resolve_data_paths()
+    output_file = paths["output"]
+    kdhw_file = paths["kdhw"]
+    kna_file = paths["kna"]
+    chdn_file = paths["chdn"]
+
+    missing: list[Path] = []
+    for source in [kdhw_file, kna_file, chdn_file]:
+        if not source.exists():
+            missing.append(source)
+
+    if missing:
+        missing_lines = "\n".join(f"- {item}" for item in missing)
+        raise FileNotFoundError(
+            "Missing source workbook(s):\n"
+            f"{missing_lines}\n"
+            "Upload the KDHW, KNA, and CHDN source folders/workbooks to the deployed repository."
+        )
 
     sheet_map = {
         "VTHC_Doses disaggregate": concat_frames(
             [
-                build_vthc_frame(KDHW_FILE, "VTHC_Doses disaggregate"),
-                build_vthc_frame(KNA_FILE, "Summary"),
-                build_vthc_frame(CHDN_FILE, "Summary"),
+                build_vthc_frame(kdhw_file, "VTHC_Doses disaggregate"),
+                build_vthc_frame(kna_file, "Summary"),
+                build_vthc_frame(chdn_file, "Summary"),
             ],
             VTHC_COLUMNS,
         ),
         "Cummulative": concat_frames(
             [
-                build_cumulative_frame(KDHW_FILE, "Cummulative_sheet"),
-                build_cumulative_frame(KNA_FILE, "yearly_cumulative"),
-                build_cumulative_frame(CHDN_FILE, "yearly_cumulative"),
+                build_cumulative_frame(kdhw_file, "Cummulative_sheet"),
+                build_cumulative_frame(kna_file, "yearly_cumulative"),
+                build_cumulative_frame(chdn_file, "yearly_cumulative"),
             ],
             CUMULATIVE_COLUMNS,
         ),
         "ALOD_cummu": concat_frames(
             [
-                build_alod_cummu_frame(KDHW_FILE, "Cummu_indicator", source_is_kd_hw=True),
-                build_alod_cummu_frame(KNA_FILE, "ALOD_cummu", source_is_kd_hw=False),
-                build_alod_cummu_frame(CHDN_FILE, "ALOD_cummu", source_is_kd_hw=False),
+                build_alod_cummu_frame(kdhw_file, "Cummu_indicator", source_is_kd_hw=True),
+                build_alod_cummu_frame(kna_file, "ALOD_cummu", source_is_kd_hw=False),
+                build_alod_cummu_frame(chdn_file, "ALOD_cummu", source_is_kd_hw=False),
             ],
             ALOD_CUMMU_COLUMNS,
         ),
         "indicators": concat_frames(
             [
-                build_indicators_frame(KDHW_FILE, "Indicator"),
-                build_indicators_frame(KNA_FILE, "indicators"),
-                build_indicators_frame(CHDN_FILE, "indicators"),
+                build_indicators_frame(kdhw_file, "Indicator"),
+                build_indicators_frame(kna_file, "indicators"),
+                build_indicators_frame(chdn_file, "indicators"),
             ],
             INDICATOR_COLUMNS,
         ),
         "Td2_indicator": concat_frames(
             [
-                build_td2_frame(KDHW_FILE, "TD2_indicator"),
-                build_td2_frame(KNA_FILE, "Td2_indicator"),
-                build_td2_frame(CHDN_FILE, "Td2_indicator"),
+                build_td2_frame(kdhw_file, "TD2_indicator"),
+                build_td2_frame(kna_file, "Td2_indicator"),
+                build_td2_frame(chdn_file, "Td2_indicator"),
             ],
             TD2_COLUMNS,
         ),
         "Td_ALOD": concat_frames(
             [
-                build_td_alod_frame(KDHW_FILE, "Td_ALOD"),
-                build_td_alod_frame(KNA_FILE, "Td_alod"),
-                build_td_alod_frame(CHDN_FILE, "Td_ALOD"),
+                build_td_alod_frame(kdhw_file, "Td_ALOD"),
+                build_td_alod_frame(kna_file, "Td_alod"),
+                build_td_alod_frame(chdn_file, "Td_ALOD"),
             ],
             TD_ALOD_COLUMNS,
         ),
     }
 
-    with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
         for sheet_name, df in sheet_map.items():
             df.to_excel(writer, sheet_name=sheet_name, index=False)
 
-    print(f"Wrote {OUTPUT_FILE}")
+    print(f"Wrote {output_file}")
 
 
 if __name__ == "__main__":
