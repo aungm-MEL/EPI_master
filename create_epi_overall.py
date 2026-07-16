@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 from typing import Iterable
 
@@ -284,7 +285,23 @@ def concat_frames(frames: list[pd.DataFrame], columns: Iterable[str]) -> pd.Data
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Create EPI_overall.xlsx from KDHW, KNA, and CHDN workbooks.")
+    parser.add_argument("--kdhw", type=Path, help="Path to KDHW source workbook")
+    parser.add_argument("--kna", type=Path, help="Path to KNA source workbook")
+    parser.add_argument("--chdn", type=Path, help="Path to CHDN source workbook")
+    parser.add_argument("--output", type=Path, help="Path to output EPI_overall.xlsx")
+    args = parser.parse_args()
+
     paths = resolve_data_paths()
+    if args.kdhw:
+        paths["kdhw"] = args.kdhw.resolve()
+    if args.kna:
+        paths["kna"] = args.kna.resolve()
+    if args.chdn:
+        paths["chdn"] = args.chdn.resolve()
+    if args.output:
+        paths["output"] = args.output.resolve()
+
     output_file = paths["output"]
     kdhw_file = paths["kdhw"]
     kna_file = paths["kna"]
