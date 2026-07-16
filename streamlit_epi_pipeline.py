@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -105,6 +106,43 @@ def resolve_paths() -> Dict[str, Path]:
 PATHS = resolve_paths()
 
 
+def _get_secret_section(section: str):
+    try:
+        if section in st.secrets:
+            return st.secrets[section]
+    except Exception:
+        return None
+    return None
+
+
+def has_installed_secret() -> bool:
+    return _get_secret_section("installed") is not None
+
+
+def has_authorized_user_secret() -> bool:
+    return _get_secret_section("authorized_user") is not None
+
+
+def materialize_google_secret_files() -> None:
+    """Write Streamlit Cloud secrets to local JSON files for subprocess compatibility."""
+    PATHS["secrets_dir"].mkdir(parents=True, exist_ok=True)
+
+    installed = _get_secret_section("installed")
+    if installed is not None:
+        credentials_payload = {"installed": dict(installed)}
+        PATHS["credentials"].write_text(
+            json.dumps(credentials_payload, ensure_ascii=True, indent=2),
+            encoding="utf-8",
+        )
+
+    authorized_user = _get_secret_section("authorized_user")
+    if authorized_user is not None:
+        PATHS["authorized"].write_text(
+            json.dumps(dict(authorized_user), ensure_ascii=True, indent=2),
+            encoding="utf-8",
+        )
+
+
 def ensure_state() -> None:
     if "history" not in st.session_state:
         st.session_state.history = []
@@ -147,8 +185,18 @@ def validate_prerequisites(sync_google: bool) -> List[str]:
         issues.append(f"Missing script: {PATHS['script_overall']}")
     if not PATHS["script_master"].exists():
         issues.append(f"Missing script: {PATHS['script_master']}")
-    if sync_google and not PATHS["credentials"].exists():
-        issues.append(f"Missing credentials.json: {PATHS['credentials']}")
+    if sync_google:
+        credentials_ready = PATHS["credentials"].exists() or has_installed_secret()
+        if not credentials_ready:
+            issues.append(
+                "Google credentials missing. Provide credentials.json in .secrets or add [installed] in Streamlit Secrets."
+            )
+
+        authorized_ready = PATHS["authorized"].exists() or has_authorized_user_secret()
+        if not authorized_ready:
+            issues.append(
+                "Google authorized user missing. Provide authorized_user.json in .secrets or add [authorized_user] in Streamlit Secrets."
+            )
     return issues
 
 
@@ -263,20 +311,28 @@ def show_history() -> None:
 def main() -> None:
     st.set_page_config(page_title="EPI Pipeline Control Center", layout="wide")
     ensure_state()
+    materialize_google_secret_files()
 
     st.title("EPI Pipeline Control Center")
     st.caption("Upload files, run pipeline, and auto-sync to Google Sheet.")
 
     with st.sidebar:
         st.header("Run Settings")
-        sync_google_default = PATHS["credentials"].exists()
+        sync_google_default = PATHS["credentials"].exists() or has_installed_secret()
         sync_google = st.toggle("Enable Google Sheet sync", value=sync_google_default)
         sheet_name = st.text_input("Google Sheet name", value="SE_EPI_master").strip() or "SE_EPI_master"
         sheet_url = st.text_input("Google Sheet URL", value=DEFAULT_SHEET_URL).strip() or DEFAULT_SHEET_URL
 
         st.markdown("### Secrets Status")
-        st.write(f"credentials.json: {'found' if PATHS['credentials'].exists() else 'missing'}")
-        st.write(f"authorized_user.json: {'found' if PATHS['authorized'].exists() else 'missing'}")
+        credentials_status = "found" if PATHS["credentials"].exists() else "missing"
+        if credentials_status == "found" and has_installed_secret():
+            credentials_status = "found (from Streamlit Secrets)"
+        st.write(f"credentials.json: {credentials_status}")
+
+        authorized_status = "found" if PATHS["authorized"].exists() else "missing"
+        if authorized_status == "found" and has_authorized_user_secret():
+            authorized_status = "found (from Streamlit Secrets)"
+        st.write(f"authorized_user.json: {authorized_status}")
 
         st.markdown("### Output Location")
         st.write(str(PATHS["project_root"]))
