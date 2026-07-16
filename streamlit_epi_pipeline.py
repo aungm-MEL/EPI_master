@@ -34,18 +34,24 @@ def resolve_paths() -> Dict[str, Path]:
             candidate_roots.append(root)
 
     for root in candidate_roots:
-        candidate_thematics = [root / "EPI_thematic_sheet", root]
-        for thematic_dir in candidate_thematics:
-            script_overall = thematic_dir / "create_epi_overall.py"
-            script_master = thematic_dir / "EPI_master" / "create_epi_master_sheet.py"
+        candidate_pairs = [
+            (root / "create_epi_overall.py", root / "create_epi_master_sheet.py"),
+            (root / "create_epi_overall.py", root / "EPI_master" / "create_epi_master_sheet.py"),
+            (
+                root / "EPI_thematic_sheet" / "create_epi_overall.py",
+                root / "EPI_thematic_sheet" / "EPI_master" / "create_epi_master_sheet.py",
+            ),
+        ]
+        for script_overall, script_master in candidate_pairs:
             if script_overall.exists() and script_master.exists():
+                thematic_dir = script_overall.parent
                 return {
                     "project_root": root,
                     "thematic_dir": thematic_dir,
                     "script_overall": script_overall,
                     "script_master": script_master,
                     "output_overall": thematic_dir / "EPI_overall.xlsx",
-                    "output_master": thematic_dir / "EPI_master" / "SE_EPI_master.xlsx",
+                    "output_master": script_master.parent / "SE_EPI_master.xlsx",
                     "credentials": thematic_dir / ".secrets" / "credentials.json",
                     "authorized": thematic_dir / ".secrets" / "authorized_user.json",
                 }
@@ -116,7 +122,18 @@ def validate_prerequisites(sync_google: bool) -> List[str]:
 
 
 def build_master_command(sync_google: bool, sheet_name: str) -> List[str]:
-    cmd = [sys.executable, str(PATHS["script_master"]), "--sheet-name", sheet_name]
+    cmd = [
+        sys.executable,
+        str(PATHS["script_master"]),
+        "--sheet-name",
+        sheet_name,
+        "--input",
+        str(PATHS["output_overall"]),
+        "--output",
+        str(PATHS["output_master"]),
+        "--secrets-dir",
+        str(PATHS["thematic_dir"] / ".secrets"),
+    ]
     if not sync_google:
         cmd.append("--no-sync-google")
     return cmd
@@ -198,7 +215,7 @@ def main() -> None:
 
     with st.sidebar:
         st.header("Run Settings")
-        sync_google = st.toggle("Enable Google Sheet sync", value=True)
+        sync_google = st.toggle("Enable Google Sheet sync", value=False)
         sheet_name = st.text_input("Google Sheet name", value="SE_EPI_master").strip() or "SE_EPI_master"
 
         st.markdown("### Secrets Status")
@@ -208,6 +225,9 @@ def main() -> None:
         st.markdown("### Location")
         st.write(str(PATHS["project_root"]))
         st.write(str(PATHS["thematic_dir"]))
+        st.markdown("### Scripts")
+        st.write(str(PATHS["script_overall"]))
+        st.write(str(PATHS["script_master"]))
 
     issues = validate_prerequisites(sync_google=sync_google)
     if issues:
