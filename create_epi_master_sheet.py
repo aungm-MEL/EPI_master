@@ -158,6 +158,14 @@ def build_cummulative(cummulative: pd.DataFrame) -> pd.DataFrame:
         (12, (("indicator", "U5Population"), ("AgeGroup", "U5target"))),
     ]
     out = to_numeric_round(build_long(cummulative, 7, specs, "Achievement"), "Achievement", 2)
+    out["doses"] = out["indicator"]
+    out["value"] = out["Achievement"]
+    out["TvA"] = "achievement"
+
+    target_mask = (out["indicator"] == "U5Population") & (out["AgeGroup"] == "U5target")
+    out.loc[target_mask, "doses"] = "U5population"
+    out.loc[target_mask, "TvA"] = "target"
+
     if "Twp_MIMU" in out.columns:
         out["Lat_Long"] = out["Twp_MIMU"].map(VTHC_LAT_LONG_MAP)
     return out
