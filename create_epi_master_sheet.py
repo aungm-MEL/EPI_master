@@ -151,17 +151,17 @@ def build_vthc(vthc: pd.DataFrame) -> pd.DataFrame:
 
 def build_cummulative(cummulative: pd.DataFrame) -> pd.DataFrame:
     specs: List[Spec] = [
-        (8, (("doses", "At least one dose"), ("AgeGroup", "Under 1-yr-old"))),
-        (9, (("doses", "At least one dose"), ("AgeGroup", "1to5-yr-old"))),
-        (10, (("doses", "At least one dose"), ("AgeGroup", ">5-yr-old"))),
-        (11, (("doses", "Td at least one dose"), ("AgeGroup", "PW"))),
-        (12, (("doses", "U5 population"), ("AgeGroup", "U5target"))),
+        (8, (("Doses", "At least one dose"), ("AgeGroup", "Under 1-yr-old"))),
+        (9, (("Doses", "At least one dose"), ("AgeGroup", "1to5-yr-old"))),
+        (10, (("Doses", "At least one dose"), ("AgeGroup", ">5-yr-old"))),
+        (11, (("Doses", "Td at least one dose"), ("AgeGroup", "PW"))),
+        (12, (("Doses", "U5 population"), ("AgeGroup", "U5target"))),
     ]
     out = to_numeric_round(build_long(cummulative, 7, specs, "Achievement"), "Achievement", 2)
 
     is_target_row = out["AgeGroup"] == "U5target"
-    keep_mask = (is_target_row & (out["doses"] == "U5 population")) | (
-        (~is_target_row) & (out["doses"] != "U5 population")
+    keep_mask = (is_target_row & (out["Doses"] == "U5 population")) | (
+        (~is_target_row) & (out["Doses"] != "U5 population")
     )
     out = out[keep_mask].copy()
 
