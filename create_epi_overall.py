@@ -289,6 +289,7 @@ def main() -> None:
     parser.add_argument("--kdhw", type=Path, help="Path to KDHW source workbook")
     parser.add_argument("--kna", type=Path, help="Path to KNA source workbook")
     parser.add_argument("--chdn", type=Path, help="Path to CHDN source workbook")
+    parser.add_argument("--prf", type=Path, help="Path to PRF_camp_immunization source workbook (optional)")
     parser.add_argument("--output", type=Path, help="Path to output EPI_overall.xlsx")
     args = parser.parse_args()
 
@@ -299,6 +300,8 @@ def main() -> None:
         paths["kna"] = args.kna.resolve()
     if args.chdn:
         paths["chdn"] = args.chdn.resolve()
+    if args.prf:
+        paths["prf"] = args.prf.resolve()
     if args.output:
         paths["output"] = args.output.resolve()
 
@@ -306,11 +309,15 @@ def main() -> None:
     kdhw_file = paths["kdhw"]
     kna_file = paths["kna"]
     chdn_file = paths["chdn"]
+    prf_file = paths.get("prf")
 
     missing: list[Path] = []
     for source in [kdhw_file, kna_file, chdn_file]:
         if not source.exists():
             missing.append(source)
+
+    if prf_file is not None and not prf_file.exists():
+        missing.append(prf_file)
 
     if missing:
         missing_lines = "\n".join(f"- {item}" for item in missing)
@@ -320,37 +327,54 @@ def main() -> None:
             "Upload the KDHW, KNA, and CHDN source folders/workbooks to the deployed repository."
         )
 
+    def with_prf(frames: list[pd.DataFrame], prf_builder) -> list[pd.DataFrame]:
+        if prf_file is not None:
+            frames.append(prf_builder(prf_file))
+        return frames
+
     sheet_map = {
         "VTHC_Doses disaggregate": concat_frames(
-            [
-                build_vthc_frame(kdhw_file, "VTHC_Doses disaggregate"),
-                build_vthc_frame(kna_file, "Summary"),
-                build_vthc_frame(chdn_file, "Summary"),
-            ],
+            with_prf(
+                [
+                    build_vthc_frame(kdhw_file, "VTHC_Doses disaggregate"),
+                    build_vthc_frame(kna_file, "Summary"),
+                    build_vthc_frame(chdn_file, "Summary"),
+                ],
+                lambda f: build_vthc_frame(f, "Summary"),
+            ),
             VTHC_COLUMNS,
         ),
         "Cummulative": concat_frames(
-            [
-                build_cumulative_frame(kdhw_file, "Cummulative_sheet"),
-                build_cumulative_frame(kna_file, "yearly_cumulative"),
-                build_cumulative_frame(chdn_file, "yearly_cumulative"),
-            ],
+            with_prf(
+                [
+                    build_cumulative_frame(kdhw_file, "Cummulative_sheet"),
+                    build_cumulative_frame(kna_file, "yearly_cumulative"),
+                    build_cumulative_frame(chdn_file, "yearly_cumulative"),
+                ],
+                lambda f: build_cumulative_frame(f, "yearly_cumulative"),
+            ),
             CUMULATIVE_COLUMNS,
         ),
         "ALOD_cummu": concat_frames(
-            [
-                build_alod_cummu_frame(kdhw_file, "Cummu_indicator", source_is_kd_hw=True),
-                build_alod_cummu_frame(kna_file, "ALOD_cummu", source_is_kd_hw=False),
-                build_alod_cummu_frame(chdn_file, "ALOD_cummu", source_is_kd_hw=False),
-            ],
+            with_prf(
+                [
+                    build_alod_cummu_frame(kdhw_file, "Cummu_indicator", source_is_kd_hw=True),
+                    build_alod_cummu_frame(kna_file, "ALOD_cummu", source_is_kd_hw=False),
+                    build_alod_cummu_frame(chdn_file, "ALOD_cummu", source_is_kd_hw=False),
+                ],
+                lambda f: build_alod_cummu_frame(f, "ALOD_cummu", source_is_kd_hw=False),
+            ),
             ALOD_CUMMU_COLUMNS,
         ),
         "indicators": concat_frames(
-            [
-                build_indicators_frame(kdhw_file, "Indicator"),
-                build_indicators_frame(kna_file, "indicators"),
-                build_indicators_frame(chdn_file, "indicators"),
-            ],
+            with_prf(
+                [
+                    build_indicators_frame(kdhw_file, "Indicator"),
+                    build_indicators_frame(kna_file, "indicators"),
+                    build_indicators_frame(chdn_file, "indicators"),
+                ],
+                lambda f: build_indicators_frame(f, "indicators"),
+            ),
             INDICATOR_COLUMNS,
         ),
         "Td2_indicator": concat_frames(

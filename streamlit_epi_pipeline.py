@@ -6,7 +6,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import streamlit as st
 
@@ -206,8 +206,10 @@ def save_uploaded_file(uploaded_file, destination: Path) -> Path:
     return destination
 
 
-def build_overall_command(kdhw_path: Path, kna_path: Path, chdn_path: Path) -> List[str]:
-    return [
+def build_overall_command(
+    kdhw_path: Path, kna_path: Path, chdn_path: Path, prf_path: Optional[Path] = None
+) -> List[str]:
+    cmd = [
         sys.executable,
         str(PATHS["script_overall"]),
         "--kdhw",
@@ -219,6 +221,9 @@ def build_overall_command(kdhw_path: Path, kna_path: Path, chdn_path: Path) -> L
         "--output",
         str(PATHS["output_overall"]),
     ]
+    if prf_path is not None:
+        cmd.extend(["--prf", str(prf_path)])
+    return cmd
 
 
 def build_master_command(sync_google: bool, sheet_name: str, sheet_url: str) -> List[str]:
@@ -351,7 +356,7 @@ def main() -> None:
         st.stop()
 
     st.subheader("Upload Source Files")
-    upload_col1, upload_col2, upload_col3 = st.columns(3)
+    upload_col1, upload_col2, upload_col3, upload_col4 = st.columns(4)
     with upload_col1:
         uploaded_kdhw = st.file_uploader(
             "KDHW workbook",
@@ -372,6 +377,13 @@ def main() -> None:
             type=["xlsx", "xlsm", "xls"],
             key="upload_chdn_streamlit",
             help="Required for Step 1",
+        )
+    with upload_col4:
+        uploaded_prf = st.file_uploader(
+            "PRF camp immunization workbook",
+            type=["xlsx", "xlsm", "xls"],
+            key="upload_prf_streamlit",
+            help="Optional for Step 1",
         )
 
     st.subheader("Actions")
@@ -396,13 +408,18 @@ def main() -> None:
         kdhw_path = save_uploaded_file(uploaded_kdhw, PATHS["uploads_dir"] / "quarterly compile.update.xlsx")
         kna_path = save_uploaded_file(uploaded_kna, PATHS["uploads_dir"] / "KNA_EPI_long.xlsx")
         chdn_path = save_uploaded_file(uploaded_chdn, PATHS["uploads_dir"] / "CHDN dataset_long.xlsx")
+        prf_path = (
+            save_uploaded_file(uploaded_prf, PATHS["uploads_dir"] / "PRF_camp_immunization.xlsx")
+            if uploaded_prf is not None
+            else None
+        )
 
         progress = st.progress(0, text="Starting full pipeline")
 
         progress.progress(30, text="Running Step 1")
         step1 = run_command(
             "Step 1 - create_epi_overall",
-            build_overall_command(kdhw_path=kdhw_path, kna_path=kna_path, chdn_path=chdn_path),
+            build_overall_command(kdhw_path=kdhw_path, kna_path=kna_path, chdn_path=chdn_path, prf_path=prf_path),
             cwd=PATHS["project_root"],
         )
         show_result(step1)
@@ -432,10 +449,15 @@ def main() -> None:
         kdhw_path = save_uploaded_file(uploaded_kdhw, PATHS["uploads_dir"] / "quarterly compile.update.xlsx")
         kna_path = save_uploaded_file(uploaded_kna, PATHS["uploads_dir"] / "KNA_EPI_long.xlsx")
         chdn_path = save_uploaded_file(uploaded_chdn, PATHS["uploads_dir"] / "CHDN dataset_long.xlsx")
+        prf_path = (
+            save_uploaded_file(uploaded_prf, PATHS["uploads_dir"] / "PRF_camp_immunization.xlsx")
+            if uploaded_prf is not None
+            else None
+        )
 
         result = run_command(
             "Step 1 - create_epi_overall",
-            build_overall_command(kdhw_path=kdhw_path, kna_path=kna_path, chdn_path=chdn_path),
+            build_overall_command(kdhw_path=kdhw_path, kna_path=kna_path, chdn_path=chdn_path, prf_path=prf_path),
             cwd=PATHS["project_root"],
         )
         show_result(result)
