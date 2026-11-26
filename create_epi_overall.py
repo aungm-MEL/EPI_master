@@ -222,9 +222,9 @@ def resolve_sheet_name(workbook: pd.ExcelFile, expected: str) -> str:
 
 
 def read_sheet(workbook_path: Path, sheet_name: str) -> pd.DataFrame:
-    workbook = pd.ExcelFile(workbook_path)
-    resolved_name = resolve_sheet_name(workbook, sheet_name)
-    return pd.read_excel(workbook_path, sheet_name=resolved_name, engine="openpyxl")
+    with pd.ExcelFile(workbook_path, engine="openpyxl") as workbook:
+        resolved_name = resolve_sheet_name(workbook, sheet_name)
+        return pd.read_excel(workbook, sheet_name=resolved_name)
 
 
 def standardize_frame(df: pd.DataFrame, columns: Iterable[str]) -> pd.DataFrame:
@@ -284,12 +284,22 @@ def concat_frames(frames: list[pd.DataFrame], columns: Iterable[str]) -> pd.Data
     return combined.dropna(how="all")
 
 
+def filter_prf_2026(df: pd.DataFrame, sheet_name: str) -> pd.DataFrame:
+    df = df.dropna(how="all")
+    years = pd.to_numeric(df["Year"], errors="coerce")
+    if not df.empty and years.notna().sum() == 0:
+        raise ValueError(f"PRF sheet {sheet_name!r} has no readable Year values")
+    result = df.loc[years.eq(2026)].copy()
+    print(f"PRF {sheet_name}: kept {len(result)} row(s) from 2026; excluded {len(df) - len(result)} row(s)")
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Create EPI_overall.xlsx from KDHW, KNA, and CHDN workbooks.")
     parser.add_argument("--kdhw", type=Path, help="Path to KDHW source workbook")
     parser.add_argument("--kna", type=Path, help="Path to KNA source workbook")
     parser.add_argument("--chdn", type=Path, help="Path to CHDN source workbook")
-    parser.add_argument("--prf", type=Path, help="Path to PRF_camp_immunization source workbook (optional)")
+    parser.add_argument("--prf", type=Path, help="Path to PRF_camp_immunization source workbook (optional; 2026 rows only)")
     parser.add_argument("--output", type=Path, help="Path to output EPI_overall.xlsx")
     args = parser.parse_args()
 
@@ -327,9 +337,9 @@ def main() -> None:
             "Upload the KDHW, KNA, and CHDN source folders/workbooks to the deployed repository."
         )
 
-    def with_prf(frames: list[pd.DataFrame], prf_builder) -> list[pd.DataFrame]:
+    def with_prf(frames: list[pd.DataFrame], prf_builder, sheet_name: str) -> list[pd.DataFrame]:
         if prf_file is not None:
-            frames.append(prf_builder(prf_file))
+            frames.append(filter_prf_2026(prf_builder(prf_file), sheet_name))
         return frames
 
     sheet_map = {
@@ -341,6 +351,7 @@ def main() -> None:
                     build_vthc_frame(chdn_file, "Summary"),
                 ],
                 lambda f: build_vthc_frame(f, "Summary"),
+                "Summary",
             ),
             VTHC_COLUMNS,
         ),
@@ -352,6 +363,7 @@ def main() -> None:
                     build_cumulative_frame(chdn_file, "yearly_cumulative"),
                 ],
                 lambda f: build_cumulative_frame(f, "yearly_cumulative"),
+                "yearly_cumulative",
             ),
             CUMULATIVE_COLUMNS,
         ),
@@ -363,6 +375,7 @@ def main() -> None:
                     build_alod_cummu_frame(chdn_file, "ALOD_cummu", source_is_kd_hw=False),
                 ],
                 lambda f: build_alod_cummu_frame(f, "ALOD_cummu", source_is_kd_hw=False),
+                "ALOD_cummu",
             ),
             ALOD_CUMMU_COLUMNS,
         ),
@@ -374,6 +387,7 @@ def main() -> None:
                     build_indicators_frame(chdn_file, "indicators"),
                 ],
                 lambda f: build_indicators_frame(f, "indicators"),
+                "indicators",
             ),
             INDICATOR_COLUMNS,
         ),
