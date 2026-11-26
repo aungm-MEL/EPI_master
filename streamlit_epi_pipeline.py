@@ -383,7 +383,7 @@ def main() -> None:
             "PRF camp immunization workbook",
             type=["xlsx", "xlsm", "xls"],
             key="upload_prf_streamlit",
-            help="Optional for Step 1",
+            help="Optional for Step 1; only 2026 PRF report data is included.",
         )
 
     st.subheader("Actions")
